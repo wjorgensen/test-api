@@ -1,0 +1,12 @@
+{
+  "name": "locus-example",
+  "version": "1.0.0",
+  "description": "Example service for Locus PaaS",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
