@@ -1,10 +1,11 @@
 {
   "name": "locus-example",
-  "version": "1.0.0",
-  "description": "Example service for Locus PaaS",
+  "version": "2.0.0",
+  "description": "Example service for Locus PaaS with Postgres",
   "main": "server.js",
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "pg": "^8.11.3"
   },
   "scripts": {
     "start": "node server.js"
