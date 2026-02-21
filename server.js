@@ -19,6 +19,22 @@ if (process.env.DATABASE_URL) {
   });
 }
 
+// Redis connection (if REDIS_URL is set)
+let redis = null;
+let redisConnected = false;
+if (process.env.REDIS_URL) {
+  const Redis = require('ioredis');
+  redis = new Redis(process.env.REDIS_URL);
+  redis.on('connect', () => {
+    console.log('Redis connected');
+    redisConnected = true;
+  });
+  redis.on('error', (err) => {
+    console.error('Redis error:', err.message);
+    redisConnected = false;
+  });
+}
+
 // Initialize table on startup
 async function initDb() {
   if (useInMemory) {
@@ -45,9 +61,10 @@ app.get('/', (req, res) => {
   res.json({
     message: 'Hello from Locus PaaS!',
     service: process.env.SERVICE_ID || 'unknown',
-    version: '2.0.0',
+    version: '3.0.0',
     storage: useInMemory ? 'in-memory' : 'postgres',
-    endpoints: ['POST /register', 'GET /names', 'GET /health'],
+    redis: redisConnected ? 'connected' : (process.env.REDIS_URL ? 'disconnected' : 'not configured'),
+    endpoints: ['POST /register', 'GET /names', 'GET /health', 'GET /redis/ping', 'POST /redis/set', 'GET /redis/get/:key', 'GET /redis/incr/:key'],
     timestamp: new Date().toISOString()
   });
 });
@@ -98,8 +115,72 @@ app.get('/names', async (req, res) => {
   }
 });
 
+// ========== REDIS ENDPOINTS ==========
+
+// Redis ping test
+app.get('/redis/ping', async (req, res) => {
+  if (!redis) {
+    return res.status(503).json({ error: 'Redis not configured', hint: 'REDIS_URL env var not set' });
+  }
+  try {
+    const pong = await redis.ping();
+    res.json({ success: true, response: pong, connected: redisConnected });
+  } catch (err) {
+    res.status(500).json({ error: 'Redis ping failed', message: err.message });
+  }
+});
+
+// Redis set key
+app.post('/redis/set', async (req, res) => {
+  if (!redis) {
+    return res.status(503).json({ error: 'Redis not configured' });
+  }
+  const { key, value, ttl } = req.body;
+  if (!key || value === undefined) {
+    return res.status(400).json({ error: 'key and value are required' });
+  }
+  try {
+    if (ttl) {
+      await redis.set(key, value, 'EX', ttl);
+    } else {
+      await redis.set(key, value);
+    }
+    res.json({ success: true, key, value, ttl: ttl || null });
+  } catch (err) {
+    res.status(500).json({ error: 'Redis set failed', message: err.message });
+  }
+});
+
+// Redis get key
+app.get('/redis/get/:key', async (req, res) => {
+  if (!redis) {
+    return res.status(503).json({ error: 'Redis not configured' });
+  }
+  try {
+    const value = await redis.get(req.params.key);
+    res.json({ key: req.params.key, value, exists: value !== null });
+  } catch (err) {
+    res.status(500).json({ error: 'Redis get failed', message: err.message });
+  }
+});
+
+// Redis increment (useful for counters)
+app.get('/redis/incr/:key', async (req, res) => {
+  if (!redis) {
+    return res.status(503).json({ error: 'Redis not configured' });
+  }
+  try {
+    const newValue = await redis.incr(req.params.key);
+    res.json({ key: req.params.key, value: newValue });
+  } catch (err) {
+    res.status(500).json({ error: 'Redis incr failed', message: err.message });
+  }
+});
+
 const server = app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`DATABASE_URL: ${process.env.DATABASE_URL ? 'set' : 'not set'}`);
+  console.log(`REDIS_URL: ${process.env.REDIS_URL ? 'set' : 'not set'}`);
   await initDb();
 });
 
@@ -108,6 +189,7 @@ process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {
     if (pool) pool.end();
+    if (redis) redis.disconnect();
     console.log('Server closed');
     process.exit(0);
   });
